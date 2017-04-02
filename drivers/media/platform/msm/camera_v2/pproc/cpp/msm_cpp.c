@@ -2303,7 +2303,6 @@ long msm_cpp_subdev_ioctl(struct v4l2_subdev *sd,
 			break;
 			}
 
-
 		rc = (copy_from_user(&frame_info,
 			(void __user *)ioctl_ptr->ioctl_ptr,
 			sizeof(struct msm_cpp_frame_info_t)) ? -EFAULT : 0);
