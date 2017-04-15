@@ -399,7 +399,8 @@
 				 <  400000  762>,
 				 <  800000  1525>,
 				 < 1094400  3051>,
-				 < 1152000  4066>;
+				 < 1152000  4066>,
+				 < 1209600  4066>;
 		};
 	};
 
@@ -663,7 +664,7 @@
 			 <&clock_gcc clk_gcc_sdcc1_apps_clk>;
 		clock-names = "iface_clk", "core_clk";
 
-		qcom,clk-rates = <400000 25000000 50000000 100000000 177770000>;
+		qcom,clk-rates = <400000 25000000 50000000 100000000 200000000>;
 		qcom,bus-speed-mode = "HS200_1p8v", "DDR_1p8v";
 
 		status = "disabled";
