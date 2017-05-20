@@ -35,7 +35,6 @@
 #include <linux/of_gpio.h>
 #include <linux/sensors.h>
 #include "yas.h"
-/* #include <linux/hardware_info.h> */
 
 #if YAS_MAG_DRIVER == YAS_MAG_DRIVER_YAS530
 #define YAS_MSM_NAME		"compass"
@@ -81,6 +80,7 @@ struct yas537_platform_data {
 	int (*init)(void);
 	void (*exit)(void);
 	int (*power_on)(bool);
+	int position;
 };
 
 static struct i2c_client *this_client;
@@ -110,10 +110,9 @@ static struct sensors_classdev sensors_cdev = {
 	.handle = SENSORS_MAGNETIC_FIELD_HANDLE,
 	.type = SENSOR_TYPE_MAGNETIC_FIELD,
 	.max_range = "2000",
-	.resolution = "0.3",
+	.resolution = "1",
 	.sensor_power = "0.28",
 	.min_delay = 10000,
-	.max_delay = 10000,
 	.fifo_reserved_event_count = 0,
 	.fifo_max_event_count = 0,
 	.enabled = 0,
@@ -189,7 +188,6 @@ static int yas_enable(struct yas_state *st)
 		mutex_lock(&st->lock);
 		st->mag.set_enable(1);
 		mutex_unlock(&st->lock);
-		schedule_delayed_work(&st->work, 0);
 	}
 	return 0;
 }
@@ -200,7 +198,6 @@ static int yas_disable(struct yas_state *st)
 		pdata = st->platform_data;
 
 	if (atomic_cmpxchg(&st->enable, 1, 0)) {
-		cancel_delayed_work_sync(&st->work);
 		mutex_lock(&st->lock);
 		st->mag.set_enable(0);
 		mutex_unlock(&st->lock);
@@ -382,7 +379,7 @@ static ssize_t yas_self_test_show(struct device *dev,
 #endif
 
 	if (ret != 0 || r.id != 7 || r.sx < 24 || r.sy < 31) {
-		printk("yas537 selftest  fail\n");
+		printk("yas537 selftest fail\n");
 		strcpy(result, "n");
 		return sprintf(buf, "%s\n", result);
 	} else {
@@ -522,8 +519,8 @@ static void yas_work_func(struct work_struct *work)
 	int ret, i;
 	ktime_t timestamp;
 
-	timestamp = ktime_get_boottime();
 	time_before = yas_current_time();
+	timestamp = ktime_get_boottime();
 	mutex_lock(&st->lock);
 	ret = st->mag.measure(mag, 1);
 	if (ret == 1) {
@@ -545,11 +542,6 @@ static void yas_work_func(struct work_struct *work)
 			ktime_to_timespec(timestamp).tv_nsec);
 		input_sync(st->input_dev);
 	}
-	time_after = yas_current_time();
-	poll_delay = poll_delay - (time_after - time_before);
-	if (poll_delay <= 0)
-		poll_delay = 1;
-	schedule_delayed_work(&st->work, msecs_to_jiffies(poll_delay));
 }
 
 static int yas_enable_set(struct sensors_classdev *sensors_cdev,
@@ -751,9 +743,20 @@ static void sensor_platform_hw_exit(void)
 static int sensor_parse_dt(struct device *dev,
 		struct yas537_platform_data *pdata)
 {
+	int rc = 0;
+	u32 temp_val = 0;
+	struct device_node *np = dev->of_node;
 	pdata->init = sensor_platform_hw_init;
 	pdata->exit = sensor_platform_hw_exit;
 	pdata->power_on = sensor_platform_hw_power_on;
+	rc = of_property_read_u32(np, "yas,position", &temp_val);
+	if (rc && (rc != -EINVAL)) {
+		dev_err(dev, "Unable to read fw delay read id\n");
+		return rc;
+	} else if (rc != -EINVAL) {
+		printk("yas,position=%d, \n", temp_val);
+		pdata->position =  temp_val;
+	}
 	return 0;
 }
 
@@ -880,7 +883,6 @@ static int yas_probe(struct i2c_client *i2c, const struct i2c_device_id *id)
 	st->mag.callback.device_read = yas_device_read;
 	st->mag.callback.usleep = yas_usleep;
 	st->mag.callback.current_time = yas_current_time;
-	INIT_DELAYED_WORK(&st->work, yas_work_func);
 	mutex_init(&st->lock);
 	for (i = 0; i < 3; i++)
 		st->compass_data[i] = 0;
@@ -893,7 +895,7 @@ static int yas_probe(struct i2c_client *i2c, const struct i2c_device_id *id)
 	st->cdev.sensors_enable = yas_enable_set;
 	st->cdev.sensors_poll_delay = yas_poll_delay_set;
 
-	ret = sensors_classdev_register(&st->input_dev->dev, &st->cdev);
+	ret = sensors_classdev_register(&i2c->dev, &st->cdev);
 	if (ret) {
 		dev_err(&i2c->dev, "class device create failed: %d\n", ret);
 		goto error_classdev_unregister;
@@ -914,8 +916,12 @@ static int yas_probe(struct i2c_client *i2c, const struct i2c_device_id *id)
 		ret = -EFAULT;
 		goto error_remove_sysfs;
 	}
+	ret = st->mag.set_position(pdata->position);
+	if (ret < 0) {
+		ret = -EFAULT;
+		goto error_remove_sysfs;
+	}
 	dev_info(&i2c->dev, " yas537 successfully probed.");
-	/* hardwareinfo_set_prop(HARDWARE_MAGNETOMETER, "yas537"); */
 	return 0;
 
 error_remove_sysfs:
@@ -958,7 +964,6 @@ static int yas_suspend(struct device *dev)
 	struct yas537_platform_data *pdata;
 	pdata = pdev_data->platform_data;
 	if (atomic_read(&pdev_data->enable)) {
-		cancel_delayed_work_sync(&pdev_data->work);
 		pdev_data->mag.set_enable(0);
 	}
 
@@ -973,7 +978,6 @@ static int yas_resume(struct device *dev)
 	pdata = pdev_data->platform_data;
 	if (atomic_read(&pdev_data->enable)) {
 		pdev_data->mag.set_enable(1);
-		schedule_delayed_work(&pdev_data->work, 0);
 	}
 
 	if (pdata->power_on)
