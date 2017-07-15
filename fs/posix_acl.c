@@ -467,7 +467,7 @@ EXPORT_SYMBOL(posix_acl_chmod);
  * or capable of CAP_FSETID (see inode_change_ok).
  *
  * Called from set_acl inode operations.
- */
+
 int posix_acl_update_mode(struct inode *inode, umode_t *mode_p,
 			  struct posix_acl **acl)
 {
@@ -486,3 +486,4 @@ int posix_acl_update_mode(struct inode *inode, umode_t *mode_p,
 	return 0;
 }
 EXPORT_SYMBOL(posix_acl_update_mode);
+*/
